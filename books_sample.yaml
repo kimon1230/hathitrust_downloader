@@ -1,0 +1,44 @@
+# HathiTrust Batch Download Configuration
+# Copy this file and modify for your needs
+#
+# Required fields per book:
+#   id: HathiTrust book ID (e.g., "uc1.$c146800")
+#   start: First page number to download
+#   end: Last page number to download
+#   output: Output PDF filename
+#
+# Optional fields:
+#   resume: true/false - Whether to resume incomplete downloads (default: true)
+#           If true, existing pages are kept and only missing pages are downloaded.
+#           If false, any existing partial download is deleted and starts fresh.
+#
+# IMPORTANT: Always quote the 'id' field with SINGLE QUOTES
+# to prevent $ from being interpreted as a YAML variable.
+#
+# Example usage:
+#   python hathitrust_download.py -f books.yaml
+#   python hathitrust_download.py -f books.yaml --safe
+
+books:
+  - id: 'uc1.$c146800'
+    start: 1
+    end: 354
+    output: "Volume_32.pdf"
+
+  - id: 'uc1.$c148966'
+    start: 1
+    end: 240
+    output: "Volume_33.pdf"
+
+  # Example with resume disabled (will always start fresh):
+  # - id: 'uc1.$c123456'
+  #   start: 1
+  #   end: 100
+  #   output: "Fresh_Download.pdf"
+  #   resume: false
+
+  # You can also use full URLs as the id:
+  # - id: 'https://babel.hathitrust.org/cgi/pt?id=mdp.39015012345678'
+  #   start: 1
+  #   end: 500
+  #   output: "Another_Book.pdf"
