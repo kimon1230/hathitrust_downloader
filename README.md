@@ -90,6 +90,7 @@ python hathitrust_download.py -f books.yaml
 
 ## Notes
 
+- You are responsible for copyright or any other legal compliance
 - Be respectful of HathiTrust's servers - use reasonable delays
 - Some books may have access restrictions
 - Downloads can be interrupted with CTRL+C and resumed later
