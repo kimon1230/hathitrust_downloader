@@ -2,6 +2,8 @@
 
 Download books from HathiTrust Digital Library as PDF files.
 
+**MAKE SURE YOU ARE COMPLYING WITH COPYRIGHT**
+
 ## Features
 
 - Download individual pages and merge into a single PDF
