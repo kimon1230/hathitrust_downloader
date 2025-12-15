@@ -86,7 +86,7 @@ python hathitrust_download.py -f books.yaml
 - requests
 - pypdf (or PyPDF2)
 - pyyaml (for batch mode)
-- curl_cffi (optional, recommended)
+- curl_cffi
 
 ## Notes
 
