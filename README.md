@@ -21,12 +21,6 @@ cd hathitrust_downloader
 pip install -r requirements.txt
 ```
 
-For better success rates, install the optional `curl_cffi` package:
-
-```bash
-pip install curl_cffi
-```
-
 ## Usage
 
 ### Single Book
