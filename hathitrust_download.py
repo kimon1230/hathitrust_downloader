@@ -128,7 +128,7 @@ def extract_book_id(url):
     if match:
         return match.group(1)
 
-    if '.' in url and '/' not in url:
+    if '.' in url and not url.startswith(('http://', 'https://')):
         return url
 
     return None
@@ -562,7 +562,7 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
         if not batch_mode:
             print("Safe mode enabled: 10-20s delays")
 
-    safe_book_id = book_id.replace('.', '_').replace('$', '_')
+    safe_book_id = book_id.replace('.', '_').replace('$', '_').replace(':', '_').replace('/', '_')
     temp_dir = os.path.join(os.getcwd(), f"hathitrust_temp_{safe_book_id}_{start_page}-{end_page}")
 
     pages_to_download = list(range(start_page, end_page + 1))
@@ -724,7 +724,7 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
 
         print()
 
-    output_file = args.output or f"{book_id.replace('.', '_').replace('$', '_')}.pdf"
+    output_file = args.output or f"{book_id.replace('.', '_').replace('$', '_').replace(':', '_').replace('/', '_')}.pdf"
 
     if skip_merge:
         return {
