@@ -7,6 +7,11 @@
   - Location: `download_page()` function around line 299
   - Consider: Different thresholds for 429 vs 403 errors
 
+### Disk Space Monitoring
+- Currently checks every 10 downloads during execution
+- Could make frequency configurable
+- Consider adding option to specify minimum space requirement
+
 ### PDF Processing
 - **Add compression option**: Output PDFs can be quite large. Consider adding optional compression.
   - Location: `merge_pdfs()` function around line 391
@@ -48,6 +53,12 @@ Falls back through multiple strategies:
 - Some books have access restrictions that aren't detectable upfront
 - Page count API sometimes returns stale data
 - HTML structure changes periodically (hence multiple regex patterns)
+
+### Concurrent Execution
+- Single global lock file prevents multiple instances from running simultaneously
+- Lock file location: `/tmp/hathitrust_downloader.lock` on Unix, `%TEMP%\hathitrust_downloader.lock` on Windows
+- Stale locks (from crashes) are automatically detected and cleaned up using PID checking
+- Lock is released via `atexit` handler on normal exit and signal handler on CTRL+C
 
 ## Testing
 

@@ -11,6 +11,8 @@
 #   resume: true/false - Whether to resume incomplete downloads (default: true)
 #           If true, existing pages are kept and only missing pages are downloaded.
 #           If false, any existing partial download is deleted and starts fresh.
+#   max_failures: integer - Max consecutive failures before giving up (default: 6)
+#           Overrides the CLI --max-failures setting for this specific book.
 #
 # IMPORTANT: Always quote the 'id' field with SINGLE QUOTES
 # to prevent $ from being interpreted as a YAML variable.
@@ -42,3 +44,10 @@ books:
   #   start: 1
   #   end: 500
   #   output: "Another_Book.pdf"
+
+  # Example with custom max_failures (overrides CLI --max-failures):
+  # - id: 'uc1.$c789012'
+  #   start: 1
+  #   end: 200
+  #   output: "Touchy_Book.pdf"
+  #   max_failures: 10  # More lenient for flaky books

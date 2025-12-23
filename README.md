@@ -77,6 +77,7 @@ python hathitrust_download.py -f books.yaml
 | `-k, --keep` | Keep individual page PDFs after merging |
 | `-d, --delay` | Minimum delay between requests (default: 5s) |
 | `--safe` | Safe mode with longer delays (10-20s) |
+| `--max-failures` | Maximum consecutive failures before giving up (default: 6) |
 | `-v, --verbose` | Verbose output |
 
 ## Requirements
@@ -109,6 +110,17 @@ python hathitrust_download.py -f books.yaml
 - Check that temp directory still exists (format: `hathitrust_temp_<bookid>_<start>-<end>`)
 - Valid PDFs in temp directory are automatically detected and skipped
 - Use `resume: false` in YAML to force fresh download
+
+**Concurrent instance error?**
+- Only one instance can run at a time to avoid rate limiting issues
+- If you see "Another instance is already running" but know this is wrong:
+  - Delete the lock file: `rm /tmp/hathitrust_downloader.lock` (Linux/Mac)
+  - Or on Windows: delete `%TEMP%\hathitrust_downloader.lock`
+
+**Disk space issues?**
+- The script requires 2GB minimum free space to start
+- Warns when space drops below 1GB during download
+- Downloads are stored in current directory
 
 ## License
 
