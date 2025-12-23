@@ -8,10 +8,12 @@ Download books from HathiTrust Digital Library as PDF files.
 
 - Download individual pages and merge into a single PDF
 - Batch download multiple books via YAML configuration
-- Resume interrupted downloads
-- Rate limiting with automatic retry and exponential backoff
+- Resume interrupted downloads automatically
+- Smart rate limiting with exponential backoff
 - Browser impersonation to avoid blocks (via curl_cffi)
 - Graceful shutdown with CTRL+C
+- Automatic retry for failed pages
+- Progress tracking with ETA
 
 ## Installation
 
@@ -51,7 +53,10 @@ books:
     start: 1
     end: 240
     output: "Volume_33.pdf"
+    resume: false  # Optional: set to false to always start fresh
 ```
+
+**Note:** Always quote book IDs with single quotes to preserve special characters like `$`.
 
 Then run:
 
@@ -88,6 +93,22 @@ python hathitrust_download.py -f books.yaml
 - Be respectful of HathiTrust's servers - use reasonable delays
 - Some books may have access restrictions
 - Downloads can be interrupted with CTRL+C and resumed later
+
+## Troubleshooting
+
+**Getting blocked or rate limited?**
+- Use `--safe` mode for longer delays between requests
+- Install `curl_cffi` for better browser impersonation: `pip install curl_cffi`
+- The script automatically retries with exponential backoff
+
+**Page count detection failing?**
+- Manually specify page count with `-p` option
+- Example: `python hathitrust_download.py -l "uc1.$c148966" -p 240 -o "book.pdf"`
+
+**Resume not working?**
+- Check that temp directory still exists (format: `hathitrust_temp_<bookid>_<start>-<end>`)
+- Valid PDFs in temp directory are automatically detected and skipped
+- Use `resume: false` in YAML to force fresh download
 
 ## License
 

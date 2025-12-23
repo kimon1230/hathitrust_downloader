@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""HathiTrust PDF downloader - grabs pages and merges to PDF."""
+"""
+HathiTrust PDF downloader
+Grabs pages and merges to PDF
+"""
 
 import argparse
 import datetime
@@ -46,19 +49,20 @@ USER_AGENTS = [
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
 ]
 
-HEADERS = {
-    'User-Agent': random.choice(USER_AGENTS),
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'same-origin',
-    'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0',
-}
+def get_headers():
+    return {
+        'User-Agent': random.choice(USER_AGENTS),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+    }
 
 session = None
 
@@ -69,7 +73,7 @@ def init_session():
         session = requests.Session(impersonate='chrome')
     else:
         session = requests.Session()
-        session.headers.update(HEADERS)
+        session.headers.update(get_headers())
 
 
 def reset_session():
@@ -78,7 +82,7 @@ def reset_session():
         session.get("https://babel.hathitrust.org/", timeout=30)
         time.sleep(random.uniform(1, 3))
     except Exception:
-        pass
+        pass  # not critical if this fails
 
 
 def parse_retry_after(response):
@@ -90,21 +94,17 @@ def parse_retry_after(response):
 
     try:
         seconds = int(retry_after)
-        if seconds >= 0:
-            return seconds
+        return seconds if seconds >= 0 else None
     except ValueError:
         pass
 
-    # http-date format
     try:
         retry_datetime = parsedate_to_datetime(retry_after)
         now = datetime.datetime.now(datetime.timezone.utc)
         delta = retry_datetime - now
         return max(0, delta.total_seconds())
     except (ValueError, TypeError, OverflowError):
-        pass
-
-    return None
+        return None
 
 
 try:
@@ -119,7 +119,16 @@ except ImportError:
 else:
     USE_PYPDF2 = False
 
+def sanitize_filename(filename):
+    # strip out chars that cause problems in filenames
+    bad_chars = {'.': '_', '$': '_', ':': '_', '/': '_', '\\': '_', ' ': '_',
+                 '?': '_', '*': '_', '"': '_', '<': '_', '>': '_', '|': '_'}
+    for char, replacement in bad_chars.items():
+        filename = filename.replace(char, replacement)
+    return filename
+
 def extract_book_id(url):
+    # try to extract book ID from URL or just return it if it's already an ID
     match = re.search(r'id=([^&]+)', url)
     if match:
         return match.group(1)
@@ -128,38 +137,44 @@ def extract_book_id(url):
     if match:
         return match.group(1)
 
+    # probably already a book ID if it has a dot and isnt a URL
     if '.' in url and not url.startswith(('http://', 'https://')):
         return url
 
     return None
 
 def get_page_count(book_id):
+    # try the API first
     api_url = f"https://babel.hathitrust.org/cgi/htd/structure/{book_id}"
-    
+
     try:
         response = session.get(api_url, timeout=30)
         response.raise_for_status()
         data = response.json()
-        
+
+        # check STRUCT1 section
         if 'STRUCT1' in data:
-            page_count = len([k for k in data.get('STRUCT1', {}).get('contents', [])
-                             if isinstance(k, dict)])
+            contents = data.get('STRUCT1', {}).get('contents', [])
+            page_count = sum(1 for item in contents if isinstance(item, dict))
             if page_count > 0:
                 return page_count
 
+        # fallback: look for seq numbers
         if 'pg' in str(data):
             pages = re.findall(r'"seq":(\d+)', str(data))
             if pages:
                 return max(int(p) for p in pages)
-                
+
     except Exception as e:
         print(f"API method failed: {e}")
     
+    # fallback to HTML parsing - less reliable but works sometimes
     try:
         html_url = f"https://babel.hathitrust.org/cgi/pt?id={book_id}"
         response = session.get(html_url, timeout=30)
         response.raise_for_status()
 
+        # try a bunch of different patterns - hathitrust keeps changing their HTML
         patterns = [
             r'"total_seq"\s*:\s*(\d+)',
             r'"totalSeq"\s*:\s*(\d+)',
@@ -184,6 +199,8 @@ def get_page_count(book_id):
     return None
 
 def get_page_count_by_probing(book_id, start=100, max_pages=2000):
+    # binary search to find the last valid page
+    # kinda slow but works when API fails
     print("Probing for page count (this may take a moment)...")
 
     def page_exists(seq):
@@ -194,6 +211,7 @@ def get_page_count_by_probing(book_id, start=100, max_pages=2000):
         except:
             return False
 
+    # find upper bound
     upper = start
     while upper <= max_pages and page_exists(upper):
         upper *= 2
@@ -201,6 +219,7 @@ def get_page_count_by_probing(book_id, start=100, max_pages=2000):
     if upper > max_pages:
         upper = max_pages
 
+    # binary search between lower and upper
     lower = upper // 2
     while lower < upper:
         mid = (lower + upper + 1) // 2
@@ -208,7 +227,7 @@ def get_page_count_by_probing(book_id, start=100, max_pages=2000):
             lower = mid
         else:
             upper = mid - 1
-    
+
     return lower if page_exists(lower) else None
 
 def is_valid_pdf(filepath):
@@ -217,19 +236,18 @@ def is_valid_pdf(filepath):
             header = f.read(8)
             if not header.startswith(b'%PDF'):
                 return False
+            # make sure it's not just a tiny error page
             f.seek(0, 2)
-            if f.tell() < 1000:
-                return False
-        return True
-    except (IOError, OSError, PermissionError) as e:
-        print(f"Warning: Could not validate PDF {filepath}: {e}")
+            return f.tell() >= 1000
+    except (IOError, OSError, PermissionError):
         return False
 
 
+# global state for rate limiting
 _download_count = 0
 _last_pause_time = time.time()
 _consecutive_failures = 0
-MAX_CONSECUTIVE_FAILURES = 6
+MAX_CONSECUTIVE_FAILURES = 6  # give up after 6 failures in a row
 
 
 def reset_download_counter():
@@ -253,18 +271,20 @@ def download_page(book_id, seq, output_dir, delay_range=(5, 12), retries=3):
     _download_count += 1
     base_wait = random.uniform(delay_range[0], delay_range[1])
 
+    # take random breaks to look more human
     if _download_count % random.randint(10, 20) == 0:
         extra_pause = random.uniform(5, 15)
         print(f"\n  Taking a break ({base_wait + extra_pause:.0f}s)...", end='', flush=True)
         time.sleep(base_wait + extra_pause)
     else:
+        # add some randomness so we dont look like a bot
         jitter = random.gauss(0, 1.5)
         wait = max(3, base_wait + jitter)
         time.sleep(wait)
 
     for attempt in range(retries):
         if shutdown_requested:
-            return None, False
+            return None, False, seq
         try:
             headers = {
                 'Referer': f'https://babel.hathitrust.org/cgi/pt?id={book_id}&seq={seq}',
@@ -274,28 +294,21 @@ def download_page(book_id, seq, output_dir, delay_range=(5, 12), retries=3):
             if response.status_code in (429, 403):
                 global _consecutive_failures
                 _consecutive_failures += 1
+                error_type = "Rate limited" if response.status_code == 429 else "Forbidden"
 
                 if _consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                    error_type = "Rate limited" if response.status_code == 429 else "Forbidden"
                     print(f"\n{error_type} on page {seq} - giving up after {_consecutive_failures} consecutive failures")
                     _consecutive_failures = 0
                     return None, False, seq
 
                 server_wait = parse_retry_after(response)
-
                 if server_wait is not None:
                     wait_time = server_wait * random.uniform(1.0, 1.1)
-                    using_retry_after = True
-                else:
-                    base_wait = 30
-                    wait_time = min(base_wait * (2 ** (_consecutive_failures - 1)), 600)
-                    wait_time = wait_time * random.uniform(0.8, 1.2)
-                    using_retry_after = False
-
-                error_type = "Rate limited" if response.status_code == 429 else "Forbidden"
-                if using_retry_after:
                     print(f"\n{error_type} on page {seq} - server requested {server_wait:.0f}s wait, waiting {wait_time:.0f}s...")
                 else:
+                    # exponential backoff
+                    base_wait = 30
+                    wait_time = min(base_wait * (2 ** (_consecutive_failures - 1)), 600) * random.uniform(0.8, 1.2)
                     print(f"\n{error_type} on page {seq} (failure {_consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}), waiting {wait_time:.0f}s...")
 
                 if _consecutive_failures >= 3:
@@ -307,6 +320,7 @@ def download_page(book_id, seq, output_dir, delay_range=(5, 12), retries=3):
 
             response.raise_for_status()
 
+            # check if we got redirected to a different page
             actual_seq = seq
             if response.url:
                 match = re.search(r'seq=(\d+)', response.url)
@@ -315,11 +329,13 @@ def download_page(book_id, seq, output_dir, delay_range=(5, 12), retries=3):
 
             content_type = response.headers.get('Content-Type', '')
             if 'pdf' not in content_type.lower() and not response.content.startswith(b'%PDF'):
+                # sometimes we get HTML error pages instead of PDFs
                 if attempt < retries - 1:
                     time.sleep(random.uniform(30, 60))
                     continue
                 else:
                     print(f"\nPage {seq}: received non-PDF response")
+                    # print(f"DEBUG: got content type {content_type}")  # uncomment for debugging
                     return None, False, actual_seq
 
             with open(output_path, 'wb') as f:
@@ -346,6 +362,30 @@ def download_page(book_id, seq, output_dir, delay_range=(5, 12), retries=3):
 
     return None, False, seq
 
+def retry_failed_pages(failed_pages, book_id, temp_dir, delay_range):
+    global shutdown_requested
+
+    downloaded = []
+    still_failed = []
+
+    print(f"\nRetrying {len(failed_pages)} pages...")
+    for seq in failed_pages:
+        if shutdown_requested:
+            # add back everything we didn't get to
+            still_failed.extend([s for s in failed_pages if s >= seq])
+            break
+
+        print(f"  Retrying page {seq}...", end='', flush=True)
+        filepath, success, actual_seq = download_page(book_id, seq, temp_dir, delay_range, retries=3)
+        if success:
+            downloaded.append((actual_seq, filepath))
+            print(" OK")
+        else:
+            still_failed.append(seq)
+            print(" FAILED")
+
+    return downloaded, still_failed
+
 def merge_pdfs(pdf_files, output_path):
     if USE_PYPDF2:
         merger = PdfMerger()
@@ -365,7 +405,7 @@ def merge_pdfs(pdf_files, output_path):
                     writer.add_page(page)
             except Exception as e:
                 print(f"Warning: Could not add {pdf_file}: {e}")
-        
+
         with open(output_path, 'wb') as f:
             writer.write(f)
 
@@ -395,26 +435,22 @@ def load_books_yaml(filepath):
         sys.exit(1)
 
     validated_books = []
+    required_fields = ['id', 'start', 'end', 'output']
+
     for i, book in enumerate(books, 1):
         if not isinstance(book, dict):
             print(f"Error: Book {i} is not a valid dictionary")
             sys.exit(1)
 
-        if 'id' not in book:
-            print(f"Error: Book {i} missing required 'id' field")
-            sys.exit(1)
-        if 'start' not in book:
-            print(f"Error: Book {i} missing required 'start' field")
-            sys.exit(1)
-        if 'end' not in book:
-            print(f"Error: Book {i} missing required 'end' field")
-            sys.exit(1)
-        if 'output' not in book:
-            print(f"Error: Book {i} missing required 'output' field")
+        # check for missing required fields
+        missing = [field for field in required_fields if field not in book]
+        if missing:
+            print(f"Error: Book {i} missing required field(s): {', '.join(missing)}")
             sys.exit(1)
 
         book_id = str(book['id'])
 
+        # warn about common mistake with $ in YAML
         if '.' in book_id and '$' not in book_id and 'uc1.' in book_id.lower():
             print(f"Warning: Book {i} ID '{book_id}' may be missing '$' character.")
             print("  Ensure IDs with '$' are quoted with single quotes in YAML.")
@@ -431,6 +467,7 @@ def load_books_yaml(filepath):
             'resume': resume
         })
 
+    # make sure no duplicate output files
     outputs = [b['output'] for b in validated_books]
     if len(outputs) != len(set(outputs)):
         print("Error: Duplicate output filenames found in YAML")
@@ -445,8 +482,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  %(prog)s -l "uc1.$c148966" -o "my_book.pdf"      # Single book
-  %(prog)s -l "uc1.$c148966" -b 1 -e 50            # Page range
+  %(prog)s -l "uc1.$c148966" -o "my_book.pdf"      # Download single book
+  %(prog)s -l "uc1.$c148966" -b 1 -e 50            # Download page range
   %(prog)s -f books.yaml                            # Batch from YAML file
   %(prog)s -f books.yaml --safe                     # Batch with safe mode
         '''
@@ -462,7 +499,7 @@ Examples:
     parser.add_argument('-d', '--delay', type=float, default=5,
                         help='Minimum delay between requests in seconds (default: 5, max will be ~2x this)')
     parser.add_argument('--safe', action='store_true',
-                        help='Safe mode: longer delays (use if getting blocked)')
+                        help='Safe mode: use longer delays between requests (10-20s instead of 5-12s) to avoid rate limiting')
 
     args = parser.parse_args()
 
@@ -497,9 +534,11 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
     if not batch_mode:
         print("Initializing session...")
         try:
+            # visit home page first to get cookies
             session.get("https://babel.hathitrust.org/", timeout=30)
             time.sleep(random.uniform(0.5, 1.5))
 
+            # then visit the book page
             init_url = f"https://babel.hathitrust.org/cgi/pt?id={book_id}&seq=1"
             init_response = session.get(init_url, timeout=30)
             time.sleep(random.uniform(0.3, 1.0))
@@ -545,6 +584,7 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
 
     print(f"Downloading pages {start_page} to {end_page}")
 
+    # simulate browsing around the book a bit before downloading
     try:
         if args.verbose:
             print("Simulating initial browsing...")
@@ -562,93 +602,94 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
         if not batch_mode:
             print("Safe mode enabled: 10-20s delays")
 
-    safe_book_id = book_id.replace('.', '_').replace('$', '_').replace(':', '_').replace('/', '_')
+    safe_book_id = sanitize_filename(book_id)
     temp_dir = os.path.join(os.getcwd(), f"hathitrust_temp_{safe_book_id}_{start_page}-{end_page}")
 
     pages_to_download = list(range(start_page, end_page + 1))
     downloaded_files = []
     failed_pages = []
 
+    # check if we have a partial download already
     if os.path.exists(temp_dir):
         existing_files = list(Path(temp_dir).glob("page_*.pdf"))
-        if existing_files:
-            valid_existing = [(int(f.stem.split('_')[1]), str(f)) for f in existing_files if is_valid_pdf(str(f))]
-            if valid_existing:
-                existing_pages = set(seq for seq, _ in valid_existing)
-                missing_pages = [p for p in pages_to_download if p not in existing_pages]
+        valid_existing = [(int(f.stem.split('_')[1]), str(f)) for f in existing_files if is_valid_pdf(str(f))]
 
-                print(f"\n{'='*50}")
-                print(f"FOUND EXISTING DOWNLOAD")
-                print(f"{'='*50}")
-                print(f"Directory: {temp_dir}")
-                print(f"Valid pages found: {len(valid_existing)}")
-                print(f"Missing pages: {len(missing_pages)}")
-                if missing_pages:
-                    print(f"Missing: {missing_pages[:20]}{'...' if len(missing_pages) > 20 else ''}")
-                print(f"{'='*50}")
+        if valid_existing:
+            existing_pages = set(seq for seq, _ in valid_existing)
+            missing_pages = [p for p in pages_to_download if p not in existing_pages]
 
-                if auto_resume is True:
-                    print("Auto-resuming download...")
-                    downloaded_files = valid_existing
-                    pages_to_download = missing_pages
-                    if not missing_pages:
-                        print("No missing pages - all pages already downloaded!")
-                elif auto_resume is False:
-                    print("Starting fresh (resume=false)...")
-                    for _, filepath in valid_existing:
-                        try:
-                            os.remove(filepath)
-                        except:
-                            pass
-                    for f in existing_files:
-                        try:
-                            os.remove(str(f))
-                        except:
-                            pass
-                    print(f"Deleted {len(existing_files)} files.")
-                else:
+            print(f"\n{'='*50}")
+            print(f"FOUND EXISTING DOWNLOAD")
+            print(f"{'='*50}")
+            print(f"Directory: {temp_dir}")
+            print(f"Valid pages found: {len(valid_existing)}")
+            print(f"Missing pages: {len(missing_pages)}")
+            if missing_pages:
+                print(f"Missing: {missing_pages[:20]}{'...' if len(missing_pages) > 20 else ''}")
+            print(f"{'='*50}")
+
+            if auto_resume is True:
+                print("Auto-resuming download...")
+                downloaded_files = valid_existing
+                pages_to_download = missing_pages
+                if not missing_pages:
+                    print("No missing pages - all pages already downloaded!")
+            elif auto_resume is False:
+                print("Starting fresh (resume=false)...")
+                for _, filepath in valid_existing:
                     try:
-                        print("\nOptions:")
-                        print("  [R] Resume - download only missing pages")
-                        print("  [S] Start fresh - delete existing and re-download all")
-                        print("  [M] Merge now - merge existing pages into PDF")
-                        print("  [Q] Quit")
-                        response = input("\nChoice [R/s/m/q]: ").strip().lower()
+                        os.remove(filepath)
+                    except:
+                        pass
+                for f in existing_files:
+                    try:
+                        os.remove(str(f))
+                    except:
+                        pass
+                print(f"Deleted {len(existing_files)} files.")
+            else:
+                try:
+                    print("\nOptions:")
+                    print("  [R] Resume - download only missing pages")
+                    print("  [S] Start fresh - delete existing and re-download all")
+                    print("  [M] Merge now - merge existing pages into PDF")
+                    print("  [Q] Quit")
+                    response = input("\nChoice [R/s/m/q]: ").strip().lower()
 
-                        if response == 'q':
-                            print("Exiting.")
-                            sys.exit(0)
-                        elif response == 'm':
-                            downloaded_files = valid_existing
-                            pages_to_download = []
-                            if missing_pages:
-                                failed_pages = missing_pages
-                        elif response == 's':
-                            print("Deleting existing files...")
-                            for _, filepath in valid_existing:
-                                try:
-                                    os.remove(filepath)
-                                except:
-                                    pass
-                            for f in existing_files:
-                                try:
-                                    os.remove(str(f))
-                                except:
-                                    pass
-                            print(f"Deleted {len(existing_files)} files.")
-                        else:
-                            downloaded_files = valid_existing
-                            pages_to_download = missing_pages
-                            if not missing_pages:
-                                print("\nNo missing pages - all pages already downloaded!")
+                    if response == 'q':
+                        print("Exiting.")
+                        sys.exit(0)
+                    elif response == 'm':
+                        downloaded_files = valid_existing
+                        pages_to_download = []
+                        if missing_pages:
+                            failed_pages = missing_pages
+                    elif response == 's':
+                        print("Deleting existing files...")
+                        for _, filepath in valid_existing:
+                            try:
+                                os.remove(filepath)
+                            except:
+                                pass
+                        for f in existing_files:
+                            try:
+                                os.remove(str(f))
+                            except:
+                                pass
+                        print(f"Deleted {len(existing_files)} files.")
+                    else:
+                        downloaded_files = valid_existing
+                        pages_to_download = missing_pages
+                        if not missing_pages:
+                            print("\nNo missing pages - all pages already downloaded!")
 
-                    except (EOFError, KeyboardInterrupt):
-                        print("\n\nExiting.")
-                        sys.exit(1)
+                except (EOFError, KeyboardInterrupt):
+                    print("\n\nExiting.")
+                    sys.exit(1)
 
     Path(temp_dir).mkdir(parents=True, exist_ok=True)
 
-    delay_range = (args.delay, args.delay * 2.4)
+    delay_range = (args.delay, args.delay * 2.4)  # min and max delay
 
     if pages_to_download:
         print(f"Delay between pages: {delay_range[0]:.0f}-{delay_range[1]:.0f} seconds")
@@ -670,6 +711,7 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
             try:
                 filepath, success, actual_seq = download_page(book_id, seq, temp_dir, delay_range)
                 if success:
+                    # HathiTrust redirects to first page when you go past the end
                     if actual_seq != seq and actual_seq in downloaded_seqs:
                         print(f"\n\nEnd of book detected at page {actual_seq}")
                         print(f"(Requested page {seq} redirected to already-downloaded page {actual_seq})")
@@ -703,19 +745,26 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
                             else:
                                 print(f"[{completed}/{len(pages_to_download)}] Downloaded page {seq}")
                         else:
+                            # progress bar
                             elapsed = time.time() - start_time
+                            total = len(pages_to_download)
+                            pct = completed * 100 // total
+
                             if completed > 0:
                                 rate = completed / elapsed
-                                remaining = len(pages_to_download) - completed
+                                remaining = total - completed
                                 eta = remaining / rate if rate > 0 else 0
-                                eta_str = f"ETA: {int(eta//60)}m {int(eta%60)}s" if eta > 60 else f"ETA: {int(eta)}s"
+                                if eta > 60:
+                                    eta_str = f"ETA: {int(eta//60)}m {int(eta%60)}s"
+                                else:
+                                    eta_str = f"ETA: {int(eta)}s"
                             else:
                                 eta_str = "ETA: --"
-                            pct = completed * 100 // len(pages_to_download)
+
                             bar_len = 20
-                            filled = bar_len * completed // len(pages_to_download)
+                            filled = bar_len * completed // total
                             bar = '█' * filled + '░' * (bar_len - filled)
-                            print(f"\r[{bar}] {pct}% ({completed}/{len(pages_to_download)}) {eta_str}  ", end='', flush=True)
+                            print(f"\r[{bar}] {pct}% ({completed}/{total}) {eta_str}  ", end='', flush=True)
                 else:
                     failed_pages.append(seq)
             except Exception as e:
@@ -724,7 +773,7 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
 
         print()
 
-    output_file = args.output or f"{book_id.replace('.', '_').replace('$', '_').replace(':', '_').replace('/', '_')}.pdf"
+    output_file = args.output or f"{sanitize_filename(book_id)}.pdf"
 
     if skip_merge:
         return {
@@ -775,6 +824,7 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
                 pass
             sys.exit(0)
 
+    # retry any failed pages
     while failed_pages and not shutdown_requested:
         print(f"\n{'='*50}")
         print(f"SKIPPED PAGES: {len(failed_pages)}")
@@ -786,22 +836,9 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
             if response == 'n':
                 break
 
-            print(f"\nRetrying {len(failed_pages)} pages...")
             retry_list = failed_pages[:]
-            failed_pages = []
-
-            for seq in retry_list:
-                if shutdown_requested:
-                    failed_pages.extend([s for s in retry_list if s >= seq])
-                    break
-                print(f"  Retrying page {seq}...", end='', flush=True)
-                filepath, success, actual_seq = download_page(book_id, seq, temp_dir, delay_range, retries=3)
-                if success:
-                    downloaded_files.append((actual_seq, filepath))
-                    print(f" OK")
-                else:
-                    failed_pages.append(seq)
-                    print(f" FAILED")
+            new_downloads, failed_pages = retry_failed_pages(retry_list, book_id, temp_dir, delay_range)
+            downloaded_files.extend(new_downloads)
 
             if not failed_pages:
                 print("\nAll pages recovered!")
@@ -841,6 +878,7 @@ def process_single_book(args, skip_merge=False, batch_mode=False, auto_resume=No
         print("No pages were downloaded successfully.")
         sys.exit(1)
 
+    # merge all the PDFs
     print(f"\nMerging {len(pdf_files)} pages into {output_file}...")
     try:
         merge_pdfs(pdf_files, output_file)
@@ -919,6 +957,7 @@ def process_batch(args):
         else:
             print(f"  Skipping book due to error")
 
+        # pause between books
         if i < len(books) and not shutdown_requested:
             wait = random.uniform(30, 60)
             print(f"\nWaiting {wait:.0f}s before next book...")
@@ -967,22 +1006,9 @@ def process_batch(args):
                 if response == 'n':
                     break
 
-                print(f"\nRetrying {len(failed_pages)} pages...")
                 retry_list = failed_pages[:]
-                failed_pages = []
-
-                for seq in retry_list:
-                    if shutdown_requested:
-                        failed_pages.extend([s for s in retry_list if s >= seq])
-                        break
-                    print(f"  Retrying page {seq}...", end='', flush=True)
-                    filepath, success, actual_seq = download_page(book_id, seq, temp_dir, delay_range, retries=3)
-                    if success:
-                        downloaded_files.append((actual_seq, filepath))
-                        print(" OK")
-                    else:
-                        failed_pages.append(seq)
-                        print(" FAILED")
+                new_downloads, failed_pages = retry_failed_pages(retry_list, book_id, temp_dir, delay_range)
+                downloaded_files.extend(new_downloads)
 
                 if not failed_pages:
                     print("\nAll pages recovered!")
